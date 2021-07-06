@@ -1,7 +1,7 @@
 
 // Our Scala versions.
 lazy val `scala-2.13` = "2.13.5"
-lazy val `scala-3.0`  = "3.0.0"
+lazy val `scala-3`    = "3.0.0"
 
 // Publishing
 name         := "pooled-resource"
@@ -24,7 +24,7 @@ headerLicense  := Some(HeaderLicense.Custom(
 
 // Compilation
 scalaVersion       := `scala-2.13`
-crossScalaVersions := Seq(`scala-2.13`, `scala-3.0`)
+crossScalaVersions := Seq(`scala-2.13`, `scala-3`)
 Compile / doc     / scalacOptions --= Seq("-Xfatal-warnings")
 Compile / doc     / scalacOptions ++= Seq(
   "-groups",
@@ -33,7 +33,7 @@ Compile / doc     / scalacOptions ++= Seq(
 )
 libraryDependencies ++= Seq(
   "org.typelevel" %% "cats-effect"         % "3.1.1",
-  "org.typelevel" %% "munit-cats-effect-3" % "1.0.0" % "test"
+  "org.typelevel" %% "munit-cats-effect-3" % "1.0.5" % "test"
 )
 
 // MUnit

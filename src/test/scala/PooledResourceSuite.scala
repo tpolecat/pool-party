@@ -6,9 +6,12 @@ package test
 
 import cats.effect._
 import cats.syntax.all._
-import org.tpolecat.pooled._
-import munit.FunSuite
 import munit.CatsEffectSuite
+import munit.FunSuite
+import org.tpolecat.poolparty.PoolEvent._
+import org.tpolecat.poolparty._
+
+import java.util.concurrent.TimeoutException
 import scala.concurrent.duration._
 
 class PooledResourceSuite extends CatsEffectSuite {
@@ -16,88 +19,82 @@ class PooledResourceSuite extends CatsEffectSuite {
   // Some failures we provoke in our tests.
   object AllocationFailure  extends Exception("Allocation Failure")
   object FreeFailure        extends Exception("Free Failure")
-  object HealthCheckFailure extends Exception("HealthCheck Failure")
+  object HealthCheckException extends Exception("HealthCheck Failure")
 
-  // Constants we use below.
+  // Constants we use below. We want FiberCount to be much larger than PoolSize to ensure that
+  // we predictably end up allocating every slot in the pool.
   val PoolSize   = 10
-  val FiberCount = 100
-
-  // A resource that provides unique integers (which will be non-unique after pooling)
-  def trivialResource(
-    ref: Ref[IO, Int],
-    free: Int => IO[Unit] = _ => IO.unit
-  ): Resource[IO, Int] =
-    Resource.make(ref.updateAndGet(_ + 1))(free)
+  val FiberCount = 1000
 
   // Use a resource many times, concurrently
   def useResource(rsrc: Resource[IO, _]): IO[Unit] =
-    (1 to FiberCount).toList.parTraverse(n => rsrc.use(_ => IO.cede)).void
+    (1 to FiberCount).toList.parTraverse(n => rsrc.use(_ => IO.sleep(1.milli))).void
 
-  test("negative pool size fails with NonPositivePoolSizeException") {
+  // A counter for pool events, so we can check to see that it's done what we expect.
+  case class Stats(
+    requests: Int = 0,
+    allocations: Int = 0,
+    completions: Int = 0,
+    releases: Int = 0,
+    recycles: Int = 0,
+    healthcheckfailures: Int = 0,
+    finalizations: Int = 0,
+    finalizationfailures: Int = 0,
+  ) {
+    def update(e: PoolEvent[Any]): Stats =
+      e match {
+        case Request(_, _) => copy(requests = requests + 1)
+        case Allocation(_, _, _) => copy(allocations = allocations + 1)
+        case Completion(_, _, _, _) => copy(completions = completions + 1)
+        case Release(_, _) => copy(releases = releases + 1)
+        case Recycle(_, _) => copy(recycles = recycles + 1)
+        case HealthCheckFailure(_, _, _) => copy(healthcheckfailures = healthcheckfailures + 1)
+        case Finalize(_, _) => copy(finalizations = finalizations + 1)
+        case FinalizerFailure(_, _, _) => copy(finalizationfailures = finalizationfailures + 1)
+      }
+  }
+  object Stats {
+    lazy val Initial = Stats(0, 0, 0, 0, 0, 0, 0)
+  }
+
+  // A reporter that updates stats.
+  def statsReporter(ref: Ref[IO, Stats]): PoolEvent[Any] => IO[Unit] = e =>
+    ref.modify { stats =>
+      (stats.update(e), IO.unit)
+    } .flatten
+
+  // Helper for constructing a test that uses a pool many times, accumulating stats on what it's
+  // doing. The caller can update the default builders to introduce failures.
+  def statsTest(
+    name: String,
+    rsrcBuilder: IntResourceBuilder => IntResourceBuilder,
+    poolBuilder: PooledResourceBuilder[IO, Int] => PooledResourceBuilder[IO, Int],
+  )(check: Stats => Unit) =
+    test(name) {
+      for {
+        stats <- Ref[IO].of(Stats.Initial)
+        rsrc  <- rsrcBuilder(IntResourceBuilder).build
+        poolR  = poolBuilder(PooledResourceBuilder.of(rsrc, PoolSize).withReporter(statsReporter(stats))).build
+        _     <- poolR.use(useResource)
+        stats <- stats.get
+      } yield check(stats)
+    }
+
+  test("negative pool size raises NonPositivePoolSizeException") {
     val rsrc = Resource.make[IO, Int](IO.never)(_ => IO.unit)
     interceptIO[IllegalArgumentException] {
       PooledResource[IO].of(rsrc, -1).use(_ => IO.never)
     }
   }
 
-  test("zero pool size fails with NonPositivePoolSizeException") {
+  test("zero pool size raises NonPositivePoolSizeException") {
     val rsrc = Resource.make[IO, Int](IO.never)(_ => IO.unit)
     interceptIO[IllegalArgumentException] {
       PooledResource[IO].of(rsrc, 0).use(_ => IO.never)
     }
   }
 
-  test("normal usage") {
-    for {
-      ref   <- Ref[IO].of(0)
-      rsrc   = trivialResource(ref)
-      poolR  = PooledResource[IO].of(rsrc, PoolSize)
-      _     <- poolR.use(useResource)
-      _     <- assertIOBoolean(ref.get.map(_ <= PoolSize))
-    } yield ()
-  }
-
-  test("normal usage when a health check returns false") {
-    for {
-      ref   <- Ref[IO].of(0)
-      rsrc   = trivialResource(ref)
-      poolR  = PooledResource[IO].of(rsrc, PoolSize, (n: Int) => (n != 3).pure[IO])
-      _     <- poolR.use(useResource)
-      _     <- assertIOBoolean(ref.get.map(_ <= PoolSize + 1))
-    } yield ()
-  }
-
-  test("normal usage when a health check returns false and free fails") {
-    for {
-      ref   <- Ref[IO].of(0)
-      rsrc   = trivialResource(ref, (n: Int) => IO.raiseError(FreeFailure).whenA(n == 3))
-      poolR  = PooledResource[IO].of(rsrc, PoolSize, (n: Int) => (n != 3).pure[IO])
-      _     <- poolR.use(useResource)
-      _     <- assertIOBoolean(ref.get.map(_ <= PoolSize + 1))
-    } yield ()
-  }
-
-  test("normal usage when a health check fails") {
-    for {
-      ref   <- Ref[IO].of(0)
-      rsrc   = trivialResource(ref)
-      poolR  = PooledResource[IO].of(rsrc, PoolSize, (n: Int) => IO.raiseError[Boolean](AllocationFailure).whenA(n == 3).as(true))
-      _     <- poolR.use(useResource)
-      _     <- assertIOBoolean(ref.get.map(_ <= PoolSize + 1))
-    } yield ()
-  }
-
-  test("normal usage when a health check fails and free fails") {
-    for {
-      ref   <- Ref[IO].of(0)
-      rsrc   = trivialResource(ref, (n: Int) => IO.raiseError[Boolean](FreeFailure).whenA(n == 3))
-      poolR  = PooledResource[IO].of(rsrc, PoolSize, (n: Int) => IO.raiseError[Boolean](AllocationFailure).whenA(n == 3).as(true))
-      _     <- poolR.use(useResource)
-      _     <- assertIOBoolean(ref.get.map(_ <= PoolSize + 1))
-    } yield ()
-  }
-
-  test("allocation failure is thrown to the caller") {
+  test("allocation raises (to the caller)") {
     val rsrc = Resource.make[IO, Int](AllocationFailure.raiseError[IO, Int])(_ => IO.unit)
     PooledResource[IO].of(rsrc, 1).use { pool =>
       interceptIO[AllocationFailure.type] {
@@ -106,17 +103,106 @@ class PooledResourceSuite extends CatsEffectSuite {
     }
   }
 
-  test("allocation should fail immediately when pool is closed") {
+  test("shutdown timeout") {
+    val rsrc = Resource.make[IO, Int](1.pure[IO])(_ => IO.never)
+    interceptMessageIO[TimeoutException]("Pool shutdown timed out after 1 millisecond with 1 resource(s) outstanding and unfinalized.") {
+      PooledResourceBuilder
+        .of(rsrc, 1)
+        .withShutdownTimeout(1.milli)
+        .build
+        .use(pool => pool.use(_ => IO.unit))
+    }
+  }
+
+  test("closed pool throws PoolClosedException") {
     val rsrc   = Resource.make[IO, Int](IO.never)(_ => IO.unit)
-    val pooled = PooledResource[IO].of(rsrc, 1)
+    val poolparty = PooledResource[IO].of(rsrc, 1)
     (1 to FiberCount).toList.parTraverse { _ =>
       interceptIO[PooledResource.PoolClosedException.type] {
-        pooled.use(_.pure[IO]).flatMap { leakedPool =>
+        poolparty.use(_.pure[IO]).flatMap { leakedPool =>
           leakedPool.use(_ => IO.never)
         }
       }
     }
   }
 
+  statsTest(
+    "normal usage",
+    _.identity,
+    _.identity
+  ) { stats =>
+    // Sanity checks
+    assertEquals(stats.allocations, PoolSize)
+    assertEquals(stats.requests, FiberCount)
+    assertEquals(stats.completions, FiberCount)
+    assertEquals(stats.finalizationfailures, 0)
+    assertEquals(stats.healthcheckfailures, 0)
+    assertEquals(stats.recycles, FiberCount)
+    assertEquals(stats.finalizations, stats.allocations)
+  }
+
+  statsTest(
+    "normal usage when health check raises",
+    _.identity,
+    _.withHealthCheck(n => IO.raiseError[Boolean](HealthCheckException).whenA(n == 3).as(true))
+  ) { stats =>
+    // Sanity checks
+    assertEquals(stats.requests, FiberCount)
+    assertEquals(stats.completions, FiberCount)
+    assertEquals(stats.finalizationfailures, 0)
+    assertEquals(stats.finalizations, stats.allocations)
+    // Actual Test
+    assertEquals(stats.healthcheckfailures, 1)    // one health check failure ...
+    assertEquals(stats.recycles, FiberCount - 1)  // precluding one recycle ...
+    assertEquals(stats.allocations, PoolSize + 1) // and prompting an extra allocation
+  }
+
+  statsTest(
+    "normal usage when health check fails",
+    _.identity,
+    _.withHealthCheck(n => (n != 3).pure[IO])
+  ) { stats =>
+    // Sanity checks
+    assertEquals(stats.requests, FiberCount)
+    assertEquals(stats.completions, FiberCount)
+    assertEquals(stats.finalizationfailures, 0)
+    assertEquals(stats.healthcheckfailures, 0)
+    assertEquals(stats.finalizations, stats.allocations)
+    // Actual Test
+    assertEquals(stats.recycles, FiberCount - 1)  // one recycle was precluded ...
+    assertEquals(stats.allocations, PoolSize + 1) // and prompting an extra allocation
+  }
+
+  statsTest(
+    "normal usage when health check fails and finalizer raises",
+    _.withFinalizer(n => IO.raiseError(FreeFailure).whenA(n == 3)),
+    _.withHealthCheck(n => (n != 3).pure[IO])
+  ) { stats =>
+    // Sanity checks
+    assertEquals(stats.requests, FiberCount)
+    assertEquals(stats.completions, FiberCount)
+    assertEquals(stats.healthcheckfailures, 0)
+    // Actual Test
+    assertEquals(stats.recycles, FiberCount - 1)  // one recycle was precluded ...
+    assertEquals(stats.finalizationfailures, 1)      // and finalization failed ...
+    assertEquals(stats.allocations, PoolSize + 1) // and prompting an extra allocation
+    assertEquals(stats.finalizations, PoolSize)
+  }
+
+  statsTest(
+    "normal usage when health check raises and finalizer raises",
+    _.withFinalizer(n => IO.raiseError(FreeFailure).whenA(n == 3)),
+    _.withHealthCheck(n => IO.raiseError[Boolean](HealthCheckException).whenA(n == 3).as(true))
+  ) { stats =>
+    // Sanity checks
+    assertEquals(stats.requests, FiberCount)
+    assertEquals(stats.completions, FiberCount)
+    // Actual Test
+    assertEquals(stats.healthcheckfailures, 1)    // one health check failure ...
+    assertEquals(stats.finalizationfailures, 1)   // and a finalization failed ...
+    assertEquals(stats.recycles, FiberCount - 1)  // precluded one recycle ...
+    assertEquals(stats.allocations, PoolSize + 1) // and prompting an extra allocation
+    assertEquals(stats.finalizations, PoolSize)
+  }
 
 }
