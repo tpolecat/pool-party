@@ -4,10 +4,10 @@ lazy val `scala-2.13` = "2.13.5"
 lazy val `scala-3`    = "3.0.0"
 
 // Publishing
-name         := "pooled-resource"
+name         := "pool-party"
 organization := "org.tpolecat"
 licenses    ++= Seq(("MIT", url("http://opensource.org/licenses/MIT")))
-homepage     := Some(url("https://github.com/tpolecat/pooled-resource"))
+homepage     := Some(url("https://github.com/tpolecat/pool-party"))
 developers   := List(
   Developer("tpolecat", "Rob Norris", "rob_norris@mac.com", url("http://www.tpolecat.org"))
 )
@@ -29,7 +29,7 @@ Compile / doc     / scalacOptions --= Seq("-Xfatal-warnings")
 Compile / doc     / scalacOptions ++= Seq(
   "-groups",
   "-sourcepath", (LocalRootProject / baseDirectory).value.getAbsolutePath,
-  "-doc-source-url", "https://github.com/tpolecat/pooled-resource/blob/v" + version.value + "€{FILE_PATH}.scala",
+  "-doc-source-url", "https://github.com/tpolecat/pool-party/blob/v" + version.value + "€{FILE_PATH}.scala",
 )
 libraryDependencies ++= Seq(
   "org.typelevel" %% "cats-effect"         % "3.1.1",
