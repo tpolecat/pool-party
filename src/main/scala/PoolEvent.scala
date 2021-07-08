@@ -73,7 +73,7 @@ object PoolEvent {
 
   /**
    * Event indicating that a released instance has been successfully finalized, either because the
-   * health check yieled `false` or because the pool itself is being shut down.
+   * health check yielded `false` or because the pool itself is being shut down.
    * @param instanceId unique identifier associated with this instance
    * @param instance the pooled instance
    */
