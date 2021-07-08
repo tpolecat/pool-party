@@ -9,6 +9,12 @@
 
 **Pool Party** is a Scala micro-library that turns a regular `cats.effect.Resource` into a non-blocking, fixed-size pooled resource with optional health checking and event reporting. **This is pre-release software** so it may cause your data center to burn down or (worse) not burn down. Either way it's not my problem.
 
+**Pool Party** is published for Scala 2.13/3.0 and you can include it in your project thus:
+
+```scala
+libraryDependencies += "org.tpolecat" %% "pool-party" % <version>
+```
+
 ### Usage
 
 `PooledResourceBuilder` builds a resource that yields a pooled version of some other underlying
