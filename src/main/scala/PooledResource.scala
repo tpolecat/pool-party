@@ -82,8 +82,8 @@ object PooledResource {
     // becomes uncancelable when we pass it to `Resource.make`. Once we're shut down nobody is
     // watching the queue so we need to reject requests eagerly (this can only happen if someone is
     // naughty and leaks a reference to the pool).
-    val acquire: F[Allocated[F, A]] =
-      PoolEvent.Request[F].flatTap(publish).flatMap { e =>
+    def acquire(poolId: Long): F[Allocated[F, A]] =
+      PoolEvent.Request[F](poolId).flatTap(publish).flatMap { e =>
         running.get.flatMap {
           case true =>
             Deferred[F, Either[Throwable, Allocated[F, A]]]
@@ -97,26 +97,26 @@ object PooledResource {
     // Releases are processed asynchronously. No waiting. This computation is a resource finalizer
     // and cannot be canceled.
     val release: (Allocated[F, A]) => F[Unit] = a =>
-      publish(PoolEvent.Release(a.identifier, a.value)) >>
+      publish(PoolEvent.Release(a.poolId, a.instanceId, a.value)) >>
       supervisor.supervise {
         healthCheck(a.value)
           .handleErrorWith { e =>
             // Health check failed with an error. Report it and yield `false` to trigger disposal.
-            publish(PoolEvent.HealthCheckFailure(a.identifier, a.value, e))
+            publish(PoolEvent.HealthCheckFailure(a.poolId, a.instanceId, a.value, e))
               .as(false)
           }
           .flatMap {
             case true  =>
               // Resource is ok. Report and add it to the response queue.
-              publish(PoolEvent.Recycle(a.identifier, a.value)) >>
+              publish(PoolEvent.Recycle(a.poolId, a.instanceId, a.value)) >>
               allocations.offer(Some(a))
             case false =>
               // Health check returned false (possibly due to an error, see above). Finalize the
               // resource and add an empty slot to the response queue.
-              (a.finalizer *> publish(PoolEvent.Finalize(a.identifier, a.value)))
+              (a.finalizer *> publish(PoolEvent.Finalize(a.poolId, a.instanceId, a.value)))
                 .handleErrorWith { e =>
                   // Finalizer failed with an error. Report it, that's all we can do!
-                  publish(PoolEvent.FinalizerFailure(a.identifier, a.value, e))
+                  publish(PoolEvent.FinalizerFailure(a.poolId, a.instanceId, a.value, e))
                 }
                 .guarantee(allocations.offer(None))
           }
@@ -125,12 +125,12 @@ object PooledResource {
 
     // Our main loop awaits a request, awaits a response, completes the request, and loops. The
     // fiber running `main` will be canceled before `shutdown` is run.
-    val main: F[Unit] = {
+    def main(poolId: Long): F[Unit] = {
       requests.take.flatMap { case (e, req) =>
         allocations.take.flatMap {
           case Some(a) =>
             // A resource is available in the queue, so report it and complete the request.
-            e.completion[F, A](a.identifier, a.value).flatMap(publish) >>
+            e.completion[F, A](a.instanceId, a.value).flatMap(publish) >>
             req.complete(Right(a)).void
           case None    =>
             // No active resources are available, but we have an empty slot to allocate a new on,
@@ -138,11 +138,11 @@ object PooledResource {
             // resources that may be returned to the queue while we're doing the allocation.
             // TODO: report
             supervisor.supervise {
-              Allocated(resource).attempt.flatMap {
+              Allocated(poolId, resource).attempt.flatMap {
                 case Right(a) =>
                   // Allocation succeeded. Report it and complete the request.
-                  publish(PoolEvent.Allocation(e.requestId, a.identifier, a.value)) >>
-                  e.completion[F, A](a.identifier, a.value).flatMap(publish) >>
+                  publish(PoolEvent.Allocation(e.poolId, e.requestId, a.instanceId, a.value)) >>
+                  e.completion[F, A](a.instanceId, a.value).flatMap(publish) >>
                   req.complete(Right(a)).void
                 case Left(t)  =>
                   // Allocation failed with an exception. Return the empty slot to the queue and
@@ -185,8 +185,8 @@ object PooledResource {
                   remaining.update(_ - 1) >> go
                 case Some(a) =>
                   // Finalize the resource.
-                  (a.finalizer >> publish(PoolEvent.Finalize(a.identifier, a.value))).handleErrorWith { e =>
-                    publish(PoolEvent.FinalizerFailure(a.identifier, a.value, e)) // Nothing else we can do
+                  (a.finalizer >> publish(PoolEvent.Finalize(a.poolId, a.instanceId, a.value))).handleErrorWith { e =>
+                    publish(PoolEvent.FinalizerFailure(a.poolId, a.instanceId, a.value, e)) // Nothing else we can do
                   } >> remaining.update(_ - 1) >> go
               }
           }
@@ -209,8 +209,10 @@ object PooledResource {
 
     // Our final resource. Note that we do `f.cancel >> shutdown` rather than `main.onCancel(shutdown)`
     // because fiber finalizers don't seem to run if the fiber has never been scheduled.
-    Resource.make(supervisor.supervise(main))(f => f.cancel >> shutdown) as
-    Resource.make(acquire)(release).map(_.value)
+    for {
+      id <- Resource.eval(Counter[F].next("pool"))
+      _  <- Resource.make(supervisor.supervise(main(id)))(f => f.cancel >> shutdown)
+    } yield Resource.make(acquire(id))(release).map(_.value)
 
   }
 

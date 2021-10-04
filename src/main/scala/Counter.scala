@@ -8,18 +8,23 @@ import cats.Functor
 import cats.effect._
 import cats.syntax.all._
 
-private[poolparty] trait Counter[F[_]] {
-  def next: F[Long]
+trait Counter[F[_]] {
+  def next(key: String): F[Long]
 }
 
-private[poolparty] object Counter {
+object Counter {
 
   def apply[F[_]](implicit ev: Counter[F]): ev.type = ev
 
-  def zero[F[_]: Temporal]: F[Counter[F]] =
-    Ref[F].of(0L).map { ref =>
+  def zero[F[_]: Functor: Ref.Make]: F[Counter[F]] =
+    Ref[F].of(Map.empty[String, Long]).map { ref =>
       new Counter[F] {
-        val next = ref.getAndUpdate(_ + 1L)
+        def next(key: String) = ref.modify { m =>
+          m.get(key) match {
+            case Some(n) => (m + (key -> (n + 1L)), n)
+            case None    => (m + (key -> 1L), 0L)
+          }
+        }
       }
     }
 
