@@ -9,6 +9,12 @@
 
 **Pool Party** is a Scala micro-library that turns a regular `cats.effect.Resource` into a non-blocking, fixed-size pooled resource with optional health checking and event reporting. **This is pre-release software** so it may cause your data center to burn down or (worse) not burn down. Either way it's not my problem.
 
+**Pool Party** is published for Scala 2.13/3.0 and you can include it in your project thus:
+
+```scala
+libraryDependencies += "org.tpolecat" %% "pool-party" % <version>
+```
+
 ### Usage
 
 `PooledResourceBuilder` builds a resource that yields a pooled version of some other underlying
@@ -30,7 +36,7 @@ In most cases you will create a pool when your program starts, and it will not b
 def run(args: List[String]): IO[ExitCode] =
   runResource[IO](args).use(_ => IO.never)
 
-// That resource is the composition of many things, incluing our pool.
+// That resource is the composition of many things, including our pool.
 def runResource[F[_]: Temporal: OtherStuff](args: List[String]): Resource[F, ExitCode] =
   for {
     ...
@@ -56,4 +62,4 @@ Note that the `Reporter` is invoked **synchronously** so it should not do anythi
 ### Getting Help
 
 First check out the [Scaladoc](https://javadoc.io/doc/org.tpolecat/pool-party_2.13), and if you're
-still in trouble please open an issue of find me on the [Typelevel Discord](https://sca.la/typeleveldiscord).
+still in trouble please open an issue or find me on the [Typelevel Discord](https://sca.la/typeleveldiscord).
