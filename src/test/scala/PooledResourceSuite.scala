@@ -43,14 +43,14 @@ class PooledResourceSuite extends CatsEffectSuite {
   ) {
     def update(e: PoolEvent[Any]): Stats =
       e match {
-        case Request(_, _) => copy(requests = requests + 1)
-        case Allocation(_, _, _) => copy(allocations = allocations + 1)
-        case Completion(_, _, _, _) => copy(completions = completions + 1)
-        case Release(_, _) => copy(releases = releases + 1)
-        case Recycle(_, _) => copy(recycles = recycles + 1)
-        case HealthCheckFailure(_, _, _) => copy(healthcheckfailures = healthcheckfailures + 1)
-        case Finalize(_, _) => copy(finalizations = finalizations + 1)
-        case FinalizerFailure(_, _, _) => copy(finalizationfailures = finalizationfailures + 1)
+        case Request(_, _, _) => copy(requests = requests + 1)
+        case Allocation(_, _, _, _) => copy(allocations = allocations + 1)
+        case Completion(_, _, _, _, _) => copy(completions = completions + 1)
+        case Release(_, _, _) => copy(releases = releases + 1)
+        case Recycle(_, _, _) => copy(recycles = recycles + 1)
+        case HealthCheckFailure(_, _, _, _) => copy(healthcheckfailures = healthcheckfailures + 1)
+        case Finalize(_, _, _) => copy(finalizations = finalizations + 1)
+        case FinalizerFailure(_, _, _, _) => copy(finalizationfailures = finalizationfailures + 1)
       }
   }
   object Stats {

@@ -10,15 +10,16 @@ import cats.syntax.all._
 private[poolparty] sealed abstract case class Allocated[F[_], A](
   value: A,
   finalizer: F[Unit],
-  identifier: Long,
+  poolId: Long,
+  instanceId: Long,
 )
 
 private[poolparty] object Allocated {
 
-  def apply[F[_]: MonadCancelThrow: Counter, A](resource: Resource[F, A]): F[Allocated[F, A]] =
+  def apply[F[_]: MonadCancelThrow: Counter, A](poolId: Long, resource: Resource[F, A]): F[Allocated[F, A]] =
     resource.allocated.flatMap { case (a, f) =>
-      Counter[F].next.map { id =>
-        new Allocated(a, f, id) {}
+      Counter[F].next("instance").map { instanceId =>
+        new Allocated(a, f, poolId, instanceId) {}
       }
     }
 
