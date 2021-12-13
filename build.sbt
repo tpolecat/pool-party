@@ -63,7 +63,7 @@ lazy val poolparty = crossProject(JVMPlatform, JSPlatform)
 
     // MUnit
     libraryDependencies ++= Seq(
-      "org.typelevel"     %%% "cats-effect"         % "3.1.1",
+      "org.typelevel"     %%% "cats-effect"         % "3.3.0",
       "io.github.cquiroz" %%% "scala-java-time"     % "2.3.0",
       "org.typelevel"     %%% "munit-cats-effect-3" % "1.0.6" % "test",
     ),

@@ -32,7 +32,7 @@ final case class PooledResourceBuilder[F[_]: Temporal, A] private (
 
   /**
    * A new `PooledResourceBuilder` with the given shutdown timeout (the default shutdown timeout is
-   * the largest `FiniteDuration` that will work on Scala-JS, which is about 24 days).
+   * the largest `FiniteDuration`, roughly 292 years).
    */
   def withShutdownTimeout(timeout: FiniteDuration):  PooledResourceBuilder[F, A] =
     copy(shutdownTimeout = timeout)
@@ -68,7 +68,7 @@ object PooledResourceBuilder {
       poolSize,
       (_: A) => Temporal[F].pure(true),
       (_: PoolEvent[A]) => Temporal[F].unit,
-      Int.MaxValue.millis
+      Long.MaxValue.nanos
     )
 
 }
