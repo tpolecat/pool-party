@@ -34,7 +34,7 @@ object PoolEvent {
   }
   object Request {
     private[poolparty] def apply[F[_]: Apply: Counter: Clock](poolId: Long): F[Request] =
-      (Counter[F].next("request"), Clock[F].realTime.map(d => Instant.ofEpochMilli(d.length))).mapN(Request(poolId, _, _))
+      (Counter[F].next("request"), Clock[F].realTime.map(d => Instant.EPOCH.plusNanos(d.toNanos))).mapN(Request(poolId, _, _))
   }
 
   /**
